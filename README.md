@@ -36,8 +36,8 @@ TecMediaFileSystem.sln
 
 ### Clonar e Instalar
 ```bash
-git clone [URL_DEL_REPOSITORIO]
-cd TecMediaFileSystem
+git clone https://github.com/stevmzz/TEC-MFS.git
+cd TEC-MFS
 dotnet restore
 dotnet build
 ```
