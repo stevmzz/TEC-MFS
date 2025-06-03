@@ -1,3 +1,4 @@
+using TecMFS.Common;
 using TecMFS.Common.DTOs;
 
 var builder = WebApplication.CreateBuilder(args);

@@ -6,7 +6,7 @@ using System.Text;
 using System.Threading.Tasks;
 using Newtonsoft.Json;
 
-namespace TecMFS.Common.Models
+namespace TecMFS.Common.Configuration
 {
     // clase que representa la configuracion del sistema raid distribuido para almacenamiento de archivos
     public class RaidConfiguration
