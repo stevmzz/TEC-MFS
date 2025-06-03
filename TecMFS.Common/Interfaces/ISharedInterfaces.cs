@@ -189,7 +189,7 @@ namespace TecMFS.Common.Interfaces
     // ================================
 
     // contrato para comunicacion http entre componentes
-    // steven (tu) implementaras esto en tecmfs.controller
+    // steven implementaras esto en tecmfs.controller
     public interface IHttpClientService
     {
         // envia request get y deserializa respuesta
