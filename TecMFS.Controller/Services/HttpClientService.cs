@@ -6,6 +6,7 @@ using System.Collections.Concurrent;
 using Newtonsoft.Json;
 using TecMFS.Common.Interfaces;
 using TecMFS.Common.Constants;
+using System.IO.Compression;
 
 namespace TecMFS.Controller.Services
 {
@@ -19,6 +20,7 @@ namespace TecMFS.Controller.Services
         private int _timeoutMs;
         private int _maxRetries;
         private int _retryDelayMs;
+        private bool _compressionEnabled = true; // habilitar compresion por defecto
 
         // configuracion del pool de conexiones
         private readonly int _maxConnectionsPerServer = 10; // maximo conexiones simultaneas por servidor
@@ -88,7 +90,7 @@ namespace TecMFS.Controller.Services
             try
             {
                 var json = JsonConvert.SerializeObject(data); // serializar datos a json
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var content = CreateCompressedContent(json, "application/json");
 
                 var response = await ExecuteWithRetryAsync(async () => await client.PostAsync(url, content));
 
@@ -124,7 +126,7 @@ namespace TecMFS.Controller.Services
             try
             {
                 var json = JsonConvert.SerializeObject(data); // serializar datos a json
-                var content = new StringContent(json, Encoding.UTF8, "application/json");
+                var content = CreateCompressedContent(json, "application/json");
 
                 var response = await ExecuteWithRetryAsync(async () => await client.PutAsync(url, content));
 
@@ -218,8 +220,7 @@ namespace TecMFS.Controller.Services
 
             try
             {
-                var content = new ByteArrayContent(data);
-                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+                var content = CreateCompressedBinaryContent(data, contentType);
 
                 var response = await ExecuteWithRetryAsync(async () => await client.PostAsync(url, content));
 
@@ -242,6 +243,15 @@ namespace TecMFS.Controller.Services
                 _logger.LogError(ex, $"Error critico durante transferencia de datos binarios - Endpoint: {url}, Tamaño: {sizeInKb:F1} KB");
                 return default(T);
             }
+        }
+
+
+
+        // configura si usar compresion en transferencias
+        public void SetCompressionEnabled(bool enabled)
+        {
+            _compressionEnabled = enabled;
+            _logger.LogInformation($"Compresion de datos {(enabled ? "habilitada" : "deshabilitada")} para futuras transferencias");
         }
 
         // ================================
@@ -361,6 +371,78 @@ namespace TecMFS.Controller.Services
 
             _logger.LogError($"Todos los intentos de reintento agotados sin exito - Total de intentos: {_maxRetries + 1}");
             throw lastException ?? new HttpRequestException("Operacion fallo despues de agotar todos los intentos de reintento");
+        }
+
+
+
+        // comprime datos usando gzip
+        private byte[] CompressData(byte[] data)
+        {
+            using var output = new MemoryStream();
+            using (var gzip = new GZipStream(output, CompressionMode.Compress))
+            {
+                gzip.Write(data, 0, data.Length);
+            }
+            return output.ToArray();
+        }
+
+
+
+        // descomprime datos gzip
+        private byte[] DecompressData(byte[] compressedData)
+        {
+            using var input = new MemoryStream(compressedData);
+            using var gzip = new GZipStream(input, CompressionMode.Decompress);
+            using var output = new MemoryStream();
+            gzip.CopyTo(output);
+            return output.ToArray();
+        }
+
+
+
+        // crea contenido http comprimido para datos de texto
+        private HttpContent CreateCompressedContent(string data, string mediaType)
+        {
+            if (!_compressionEnabled)
+            {
+                return new StringContent(data, Encoding.UTF8, mediaType);
+            }
+
+            var originalBytes = Encoding.UTF8.GetBytes(data);
+            var compressedBytes = CompressData(originalBytes);
+            var content = new ByteArrayContent(compressedBytes);
+
+            content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(mediaType);
+            content.Headers.ContentEncoding.Add("gzip");
+
+            var compressionRatio = originalBytes.Length > 0 ? (double)compressedBytes.Length / originalBytes.Length * 100 : 0;
+            _logger.LogDebug($"Datos comprimidos - Original: {originalBytes.Length} bytes, Comprimido: {compressedBytes.Length} bytes ({compressionRatio:F1}%)");
+
+            return content;
+        }
+
+
+
+        // crea contenido http comprimido para datos binarios
+        private HttpContent CreateCompressedBinaryContent(byte[] data, string contentType)
+        {
+            if (!_compressionEnabled)
+            {
+                var content = new ByteArrayContent(data);
+                content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+                return content;
+            }
+
+            var compressedData = CompressData(data);
+            var compressedContent = new ByteArrayContent(compressedData);
+
+            compressedContent.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue(contentType);
+            compressedContent.Headers.ContentEncoding.Add("gzip");
+
+            var compressionRatio = data.Length > 0 ? (double)compressedData.Length / data.Length * 100 : 0;
+            _logger.LogDebug($"Datos binarios comprimidos - Original: {data.Length} bytes, Comprimido: {compressedData.Length} bytes ({compressionRatio:F1}%)");
+
+            return compressedContent;
         }
 
 
