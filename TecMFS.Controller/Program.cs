@@ -2,6 +2,7 @@ using TecMFS.Common;
 using TecMFS.Common.DTOs;
 using TecMFS.Common.Interfaces;
 using TecMFS.Controller.Services;
+using TecMFS.Controller.Middleware;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -39,6 +40,7 @@ if (app.Environment.IsDevelopment())
 }
 
 app.UseHttpsRedirection();
+app.UseMiddleware<TecMFS.Controller.Middleware.ErrorHandlingMiddleware>();
 app.UseAuthorization();
 app.MapControllers();
 
