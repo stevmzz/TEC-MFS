@@ -38,5 +38,8 @@ namespace TecMFS.Common.Models
 
         [JsonProperty("createdAt")]
         public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
+        public string FileName { get; set; }
+        public int Index { get; set; }
+        public byte[] Data { get; set; }
     }
 }

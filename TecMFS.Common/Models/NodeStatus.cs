@@ -31,6 +31,9 @@ namespace TecMFS.Common.Models
         [JsonProperty("usedStorage")]
         public long UsedStorage { get; set; }
 
+        [JsonProperty("blockCount")]
+        public int BlockCount { get; set; }
+
         [JsonProperty("lastHeartbeat")]
         public DateTime LastHeartbeat { get; set; } = DateTime.UtcNow;
 
