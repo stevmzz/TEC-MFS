@@ -11,6 +11,10 @@ namespace TecMFS.Controller.Services
     {
         private readonly ILogger<RaidManager> _logger;
         private readonly IHttpClientService _httpClientService;
+        private readonly Dictionary<string, FileMetadata> _metadataIndex = new();
+        private readonly string raidStatusFile = Path.Combine(Directory.GetCurrentDirectory(), "Metadata", "raid-status.json");
+
+
 
         private readonly string metadataPath = Path.Combine(Directory.GetCurrentDirectory(), "Metadata");
         private readonly int blockSize = 512 * 1024; // 512 KB por bloque
@@ -23,6 +27,8 @@ namespace TecMFS.Controller.Services
 
             if (!Directory.Exists(metadataPath))
                 Directory.CreateDirectory(metadataPath);
+
+            LoadAllMetadata(); // cargar todos los metadatos e indexarlos al iniciar
         }
 
         public async Task<string> SaveFile(IFormFile file)
@@ -105,6 +111,8 @@ namespace TecMFS.Controller.Services
             if (File.Exists(metaFile))
                 File.Delete(metaFile);
 
+            _metadataIndex.Remove(fileName); // actualizar el índice de metadatos
+
             return true;
         }
 
@@ -174,36 +182,26 @@ namespace TecMFS.Controller.Services
 
         public Task<List<FileMetadata>> ListFilesAsync()
         {
-            var files = GetStoredFiles()
-                .Select(name => new FileMetadata { FileName = name })
-                .ToList();
-
+            var files = _metadataIndex.Values.ToList(); // usar el índice ya cargado
             return Task.FromResult(files);
         }
 
         public Task<List<FileMetadata>> SearchFilesAsync(string searchQuery)
         {
-            var results = GetStoredFiles()
-                .Where(name => name.Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
-                .Select(name => new FileMetadata { FileName = name })
+            var results = _metadataIndex.Values
+                .Where(meta => meta.FileName.Contains(searchQuery, StringComparison.OrdinalIgnoreCase))
                 .ToList();
 
             return Task.FromResult(results);
         }
 
+
         public Task<FileMetadata?> GetFileMetadataAsync(string fileName)
         {
-            var metadata = LoadMetadata(fileName);
-            if (metadata == null)
-                return Task.FromResult<FileMetadata?>(null);
+            if (_metadataIndex.TryGetValue(fileName, out var metadata))
+                return Task.FromResult<FileMetadata?>(metadata);
 
-            return Task.FromResult<FileMetadata?>(new FileMetadata
-            {
-                FileName = fileName,
-                Blocks = metadata,
-                FileSize = metadata.Sum(b => b.Data?.Length ?? 0),
-                IsComplete = true
-            });
+            return Task.FromResult<FileMetadata?>(null);
         }
 
         public async Task<StatusResponse> GetRaidStatusAsync()
@@ -254,6 +252,8 @@ namespace TecMFS.Controller.Services
                 response.ErrorCount++;
             }
 
+            SaveRaidStatusToFile(response);
+
             return response;
         }
 
@@ -294,9 +294,74 @@ namespace TecMFS.Controller.Services
             }
 
             SaveMetadata(fileName, blocks);
+
+            _metadataIndex[fileName] = new FileMetadata
+            {
+                FileName = fileName,
+                Blocks = blocks,
+                FileSize = blocks.Sum(b => b.Data?.Length ?? 0),
+                IsComplete = true
+            };
+
+
             _logger.LogInformation($"Archivo {fileName} guardado correctamente con {blocks.Count} bloques.");
         }
 
+        private void LoadAllMetadata()
+        {
+            _metadataIndex.Clear();
+
+            foreach (var file in Directory.GetFiles(metadataPath, "*.meta"))
+            {
+                string fileName = Path.GetFileNameWithoutExtension(file);
+                var blocks = LoadMetadata(fileName);
+                if (blocks != null)
+                {
+                    _metadataIndex[fileName] = new FileMetadata
+                    {
+                        FileName = fileName,
+                        Blocks = blocks,
+                        FileSize = blocks.Sum(b => b.Data?.Length ?? 0),
+                        IsComplete = true
+                    };
+                }
+            }
+
+            _logger.LogInformation($"Índice de metadatos cargado: {_metadataIndex.Count} archivos indexados.");
+        }
+
+        private void SaveRaidStatusToFile(StatusResponse status)
+        {
+            try
+            {
+                var json = System.Text.Json.JsonSerializer.Serialize(status, new System.Text.Json.JsonSerializerOptions
+                {
+                    WriteIndented = true
+                });
+                File.WriteAllText(raidStatusFile, json);
+                _logger.LogInformation("Estado del RAID guardado exitosamente en raid-status.json.");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error al guardar el estado del RAID en archivo.");
+            }
+        }
+
+        private StatusResponse? LoadRaidStatusFromFile()
+        {
+            try
+            {
+                if (!File.Exists(raidStatusFile)) return null;
+
+                var json = File.ReadAllText(raidStatusFile);
+                return System.Text.Json.JsonSerializer.Deserialize<StatusResponse>(json);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error al leer el estado del RAID desde archivo.");
+                return null;
+            }
+        }
 
     }
 }

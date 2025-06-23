@@ -11,16 +11,11 @@ builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
 
-// configurar httpclient para comunicacion entre componentes
-builder.Services.AddHttpClient<IHttpClientService, HttpClientService>(client =>
-{
-    // configuracion global del cliente http
-    client.DefaultRequestHeaders.Add("User-Agent", "TecMFS-Controller/1.0");
-    client.Timeout = TimeSpan.FromSeconds(30);
-});
-
 // registrar como singleton para reutilizar conexiones
 builder.Services.AddSingleton<IHttpClientService, HttpClientService>();
+
+// registrar servicio principal de gestion RAID
+builder.Services.AddSingleton<IRaidManager, RaidManager>();
 
 // configurar logging
 builder.Services.AddLogging(config =>
@@ -39,7 +34,7 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
-app.UseHttpsRedirection();
+//app.UseHttpsRedirection();
 app.UseMiddleware<TecMFS.Controller.Middleware.ErrorHandlingMiddleware>();
 app.UseAuthorization();
 app.MapControllers();

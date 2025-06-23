@@ -43,23 +43,25 @@ namespace TecMFS.Controller.Services
             };
 
             // Leer nodos desde appsettings
-            var nodeUrls = configuration.GetSection("DiskNodes").Get<string[]>();
-            if (nodeUrls == null || nodeUrls.Length == 0)
+            var nodeConfigs = configuration.GetSection("DiskNodes").Get<List<DiskNodeConfig>>();
+            if (nodeConfigs == null || nodeConfigs.Count == 0)
                 throw new InvalidOperationException("No se encontraron nodos en la configuración.");
 
-            _httpClients = new HttpClient[nodeUrls.Length]; // <- crear array compatible
+            _httpClients = new HttpClient[nodeConfigs.Count];
 
-            for (int i = 0; i < nodeUrls.Length; i++)
+            for (int i = 0; i < nodeConfigs.Count; i++)
             {
-                var url = nodeUrls[i];
+                var config = nodeConfigs[i];
+                var url = config.BaseUrl;
+
                 var client = new HttpClient(_handler, disposeHandler: false)
                 {
                     BaseAddress = new Uri(url),
                     Timeout = TimeSpan.FromMilliseconds(_timeoutMs)
                 };
 
-                _clientPool.TryAdd(url, client); // conservar estructura existente
-                _httpClients[i] = client;        // <- llenar array para compatibilidad con el resto del código
+                _clientPool.TryAdd(url, client);
+                _httpClients[i] = client;
             }
 
             _logger.LogInformation($"HttpClient service inicializado exitosamente con pool de conexiones habilitado - Conexiones máximas por servidor: {_maxConnectionsPerServer}");
@@ -523,6 +525,7 @@ namespace TecMFS.Controller.Services
                 {
                     nodeStatus.NodeId = nodeId; // asegurarse que el id sea correcto
                     nodeStatus.IsOnline = true;
+                    nodeStatus.BaseUrl = _httpClients[nodeId].BaseAddress?.ToString() ?? "";
                     return nodeStatus;
                 }
             }
