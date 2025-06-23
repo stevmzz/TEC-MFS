@@ -234,6 +234,12 @@ namespace TecMFS.Common.Interfaces
         // maxretries: numero maximo de reintentos
         // delayms: delay entre reintentos
         void SetRetryPolicy(int maxRetries, int delayMs);
+        Task SendBlockToNodeAsync(int targetNode, BlockInfo block);
+        Task<BlockInfo> GetBlockFromNodeAsync(int node, string fileName, int index);
+        Task DeleteBlockFromNodeAsync(int node, string fileName, int index);
+        Task<NodeStatus> GetNodeStatusAsync(int nodeId);
+
+
     }
 
     // ================================

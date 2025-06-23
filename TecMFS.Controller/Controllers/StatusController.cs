@@ -1,7 +1,8 @@
 using Microsoft.AspNetCore.Mvc;
-using TecMFS.Common.DTOs;
-using TecMFS.Common.Models;
 using TecMFS.Common.Constants;
+using TecMFS.Common.DTOs;
+using TecMFS.Common.Interfaces;
+using TecMFS.Common.Models;
 using static TecMFS.Controller.Controllers.FilesController;
 
 namespace TecMFS.Controller.Controllers
@@ -12,10 +13,14 @@ namespace TecMFS.Controller.Controllers
     public class StatusController : ControllerBase
     {
         private readonly ILogger<StatusController> _logger;
-        public StatusController(ILogger<StatusController> logger)
+        private readonly IRaidManager _raidManager;
+
+        public StatusController(ILogger<StatusController> logger, IRaidManager raidManager)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _raidManager = raidManager ?? throw new ArgumentNullException(nameof(raidManager));
         }
+
 
         // get: obtiene el estado general del sistema raid
         [HttpGet("raid")]
@@ -27,13 +32,9 @@ namespace TecMFS.Controller.Controllers
     
             try
             {
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
-
-                // mock response para testing
-                var mockStatus = CreateMockRaidStatus();
-
-                _logger.LogInformation($"Estado RAID obtenido exitosamente - Estado: {mockStatus.Status}, Nodos online: {mockStatus.OnlineNodes}/{SystemConstants.RAID_TOTAL_NODES}");
-                return Ok(mockStatus);
+                var raidStatus = await _raidManager.GetRaidStatusAsync();
+                _logger.LogInformation($"Estado RAID obtenido exitosamente - Estado: {raidStatus.Status}, Nodos online: {raidStatus.OnlineNodes}/{SystemConstants.RAID_TOTAL_NODES}");
+                return Ok(raidStatus);
 
             }
 
@@ -61,14 +62,12 @@ namespace TecMFS.Controller.Controllers
 
             try
             {
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
+                var raidStatus = await _raidManager.GetRaidStatusAsync();
+                var nodes = raidStatus.Nodes;
+                var onlineCount = nodes.Count(n => n.IsOnline);
+                _logger.LogInformation($"Estado de nodos obtenido exitosamente - Online: {onlineCount}/{nodes.Count}");
+                return Ok(nodes);
 
-                // mock response para testing
-                var mockNodes = CreateMockNodesStatus();
-
-                var onlineCount = mockNodes.Count(n => n.IsOnline);
-                _logger.LogInformation($"Estado de nodos obtenido exitosamente - Online: {onlineCount}/{mockNodes.Count}");
-                return Ok(mockNodes);
             }
             catch (Exception ex)
             {

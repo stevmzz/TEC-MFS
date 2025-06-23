@@ -43,7 +43,7 @@ namespace TecMFS.Common.Constants
         // ================================
 
         // puerto base del controller
-        public const int CONTROLLER_PORT = 5000;
+        public const int CONTROLLER_PORT = 5100;
 
         // puerto https del controller
         public const int CONTROLLER_HTTPS_PORT = 5443;

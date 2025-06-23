@@ -1,8 +1,9 @@
 using Microsoft.AspNetCore.Mvc;
-using TecMFS.Common.DTOs;
-using TecMFS.Common.Models;
-using TecMFS.Common.Constants;
 using System.ComponentModel.DataAnnotations;
+using TecMFS.Common.Constants;
+using TecMFS.Common.DTOs;
+using TecMFS.Common.Interfaces;
+using TecMFS.Common.Models;
 
 namespace TecMFS.Controller.Controllers
 {
@@ -12,9 +13,12 @@ namespace TecMFS.Controller.Controllers
     public class FilesController : ControllerBase
     {
         private readonly ILogger<FilesController> _logger;
-        public FilesController(ILogger<FilesController> logger)
+        private readonly IRaidManager _raidManager;
+
+        public FilesController(ILogger<FilesController> logger, IRaidManager raidManager)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _raidManager = raidManager ?? throw new ArgumentNullException(nameof(raidManager));
         }
 
         // post: sube un archivo pdf al sistema raid
@@ -43,6 +47,19 @@ namespace TecMFS.Controller.Controllers
                 // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
 
                 // mock response para testing
+                var success = await _raidManager.StoreFileAsync(request);
+
+                if (!success)
+                {
+                    _logger.LogError($"Error al almacenar el archivo {request.FileName}");
+                    return StatusCode(500, new ErrorResponse
+                    {
+                        Error = "Almacenamiento fallido",
+                        Message = "No se pudo almacenar el archivo en el sistema RAID",
+                        RequestId = Guid.NewGuid().ToString()
+                    });
+                }
+
                 var response = new UploadResponse
                 {
                     Success = true,
@@ -54,6 +71,7 @@ namespace TecMFS.Controller.Controllers
                     BlocksCreated = CalculateBlockCount(request.FileSize),
                     NodesUsed = SystemConstants.RAID_TOTAL_NODES
                 };
+
 
                 _logger.LogInformation($"Archivo cargado exitosamente: {request.FileName}, FileId: {response.FileId}, Bloques: {response.BlocksCreated}");
                 return Ok(response);
@@ -95,11 +113,8 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
-
-                // mock response para testing
-                var mockFileData = CreateMockPdfData(fileName);
-                if (mockFileData == null)
+                var data = await _raidManager.RetrieveFileAsync(fileName);
+                if (data == null)
                 {
                     _logger.LogWarning($"Archivo no encontrado: {fileName}");
                     return NotFound(new ErrorResponse
@@ -110,8 +125,10 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                _logger.LogInformation($"Archivo descargado exitosamente: {fileName}, Tamaño: {mockFileData.Length} bytes");
-                return File(mockFileData, "application/pdf", fileName);
+                _logger.LogInformation($"Archivo descargado exitosamente: {fileName}, Tamaño: {data.Length} bytes");
+                return File(data, "application/pdf", fileName);
+
+
             }
 
             catch (Exception ex)
@@ -139,18 +156,16 @@ namespace TecMFS.Controller.Controllers
 
             try
             {
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
-
-                // mock response para testing
-                // mock response para testing
-                var mockFiles = CreateMockFileList();
+                var realFiles = await _raidManager.ListFilesAsync();
                 var response = new FileListResponse
+
                 {
-                    Files = mockFiles,
-                    TotalCount = mockFiles.Count,
-                    TotalSize = mockFiles.Sum(f => f.FileSize),
+                    Files = realFiles,
+                    TotalCount = realFiles.Count,
+                    TotalSize = realFiles.Sum(f => f.FileSize),
                     GeneratedAt = DateTime.UtcNow
                 };
+
 
                 _logger.LogInformation($"Lista de archivos generada exitosamente: {response.TotalCount} archivos, Tamaño total: {FormatBytes(response.TotalSize)}");
                 return Ok(response);
@@ -193,11 +208,8 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
+                var filteredFiles = await _raidManager.SearchFilesAsync(query);
 
-                // mock response para testing
-                var allFiles = CreateMockFileList();
-                var filteredFiles = allFiles.Where(f => f.FileName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
 
                 var response = new FileListResponse
                 {
@@ -248,11 +260,8 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
-
-                // mock response para testing
-                var mockMetadata = CreateMockFileMetadata(fileName);
-                if (mockMetadata == null)
+                var metadata = await _raidManager.GetFileMetadataAsync(fileName);
+                if (metadata == null)
                 {
                     _logger.LogWarning($"Archivo no encontrado para info: {fileName}");
                     return NotFound(new ErrorResponse
@@ -263,8 +272,9 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                _logger.LogInformation($"Informacion de archivo obtenida exitosamente: {fileName}, Bloques: {mockMetadata.Blocks.Count}");
-                return Ok(mockMetadata);
+                _logger.LogInformation($"Informacion de archivo obtenida exitosamente: {fileName}, Bloques: {metadata.Blocks.Count}");
+                return Ok(metadata);
+
             }
 
             catch (Exception ex)
@@ -304,11 +314,8 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
-
-                // mock response para testing
-                var mockResult = SimulateDeleteOperation(fileName);
-                if (!mockResult.Success)
+                var deleted = await _raidManager.DeleteFileAsync(fileName);
+                if (!deleted)
                 {
                     _logger.LogWarning($"Archivo no encontrado para eliminacion: {fileName}");
                     return NotFound(new ErrorResponse
@@ -319,8 +326,15 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                _logger.LogInformation($"Archivo eliminado exitosamente: {fileName}, Bloques liberados: {mockResult.BlocksDeleted}");
-                return Ok(mockResult);
+                _logger.LogInformation($"Archivo eliminado exitosamente: {fileName}");
+                return Ok(new DeleteResponse
+                {
+                    Success = true,
+                    FileName = fileName,
+                    DeletedAt = DateTime.UtcNow,
+                    Message = "Archivo eliminado exitosamente del sistema RAID"
+                });
+
             }
 
             catch (Exception ex)
@@ -457,6 +471,8 @@ namespace TecMFS.Controller.Controllers
 
             return new DeleteResponse { Success = false };
         }
+
+
 
         // ================================
         // clases helper para responses

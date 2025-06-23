@@ -7,6 +7,7 @@ using Newtonsoft.Json;
 using TecMFS.Common.Interfaces;
 using TecMFS.Common.Constants;
 using System.IO.Compression;
+using TecMFS.Common.Models;
 
 namespace TecMFS.Controller.Services
 {
@@ -14,6 +15,7 @@ namespace TecMFS.Controller.Services
     // maneja todas las operaciones http del sistema distribuido
     public class HttpClientService : IHttpClientService, IDisposable
     {
+        private readonly HttpClient[] _httpClients;
         private readonly ILogger<HttpClientService> _logger;
         private readonly ConcurrentDictionary<string, HttpClient> _clientPool; // pool de clientes por servidor
         private readonly HttpClientHandler _handler; // handler compartido para optimizacion
@@ -26,23 +28,45 @@ namespace TecMFS.Controller.Services
         private readonly int _maxConnectionsPerServer = 10; // maximo conexiones simultaneas por servidor
 
         // constructor que configura el cliente http con valores por defecto
-        public HttpClientService(ILogger<HttpClientService> logger)
+        public HttpClientService(ILogger<HttpClientService> logger, IConfiguration configuration)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
-            _clientPool = new ConcurrentDictionary<string, HttpClient>(); // inicializar pool thread-safe
+            _clientPool = new ConcurrentDictionary<string, HttpClient>();
             _timeoutMs = SystemConstants.DEFAULT_REQUEST_TIMEOUT_MS;
             _maxRetries = SystemConstants.MAX_RETRY_ATTEMPTS;
             _retryDelayMs = 1000;
 
-            // configurar handler con pool optimizado para reutilizacion de conexiones
             _handler = new HttpClientHandler()
             {
-                MaxConnectionsPerServer = _maxConnectionsPerServer, // limitar conexiones simultaneas
-                UseCookies = false // deshabilitar cookies para apis rest
+                MaxConnectionsPerServer = _maxConnectionsPerServer,
+                UseCookies = false
             };
 
-            _logger.LogInformation($"HttpClient service inicializado exitosamente con pool de conexiones habilitado - Conexiones maximas por servidor: {_maxConnectionsPerServer}");
+            // Leer nodos desde appsettings
+            var nodeConfigs = configuration.GetSection("DiskNodes").Get<List<DiskNodeConfig>>();
+            if (nodeConfigs == null || nodeConfigs.Count == 0)
+                throw new InvalidOperationException("No se encontraron nodos en la configuración.");
+
+            _httpClients = new HttpClient[nodeConfigs.Count];
+
+            for (int i = 0; i < nodeConfigs.Count; i++)
+            {
+                var config = nodeConfigs[i];
+                var url = config.BaseUrl;
+
+                var client = new HttpClient(_handler, disposeHandler: false)
+                {
+                    BaseAddress = new Uri(url),
+                    Timeout = TimeSpan.FromMilliseconds(_timeoutMs)
+                };
+
+                _clientPool.TryAdd(url, client);
+                _httpClients[i] = client;
+            }
+
+            _logger.LogInformation($"HttpClient service inicializado exitosamente con pool de conexiones habilitado - Conexiones máximas por servidor: {_maxConnectionsPerServer}");
         }
+
 
         // ================================
         // metodos publicos de la interface
@@ -461,5 +485,65 @@ namespace TecMFS.Controller.Services
 
             _logger.LogInformation($"HttpClientService disposed exitosamente - Liberados {clientCount} clientes HTTP y pool de conexiones");
         }
+
+        public async Task SendBlockToNodeAsync(int targetNode, BlockInfo block)
+        {
+            var client = _httpClients[targetNode];
+            var response = await client.PostAsJsonAsync("/api/block", block);
+            response.EnsureSuccessStatusCode();
+        }
+
+
+        public async Task<BlockInfo> GetBlockFromNodeAsync(int node, string fileName, int index)
+        {
+            var client = _httpClients[node];
+            var response = await client.GetAsync($"/api/block/{fileName}/{index}");
+            response.EnsureSuccessStatusCode();
+
+            return await response.Content.ReadFromJsonAsync<BlockInfo>();
+        }
+
+
+        public async Task DeleteBlockFromNodeAsync(int node, string fileName, int index)
+        {
+            var client = _httpClients[node];
+            var response = await client.DeleteAsync($"/api/block/{fileName}/{index}");
+            response.EnsureSuccessStatusCode();
+        }
+
+        public async Task<NodeStatus> GetNodeStatusAsync(int nodeId)
+        {
+            var client = _httpClients[nodeId];
+
+            try
+            {
+                var response = await client.GetAsync("/api/status/node");
+                response.EnsureSuccessStatusCode();
+
+                var nodeStatus = await response.Content.ReadFromJsonAsync<NodeStatus>();
+                if (nodeStatus != null)
+                {
+                    nodeStatus.NodeId = nodeId; // asegurarse que el id sea correcto
+                    nodeStatus.IsOnline = true;
+                    nodeStatus.BaseUrl = _httpClients[nodeId].BaseAddress?.ToString() ?? "";
+                    return nodeStatus;
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, $"Nodo {nodeId} no respondió correctamente.");
+            }
+
+            return new NodeStatus
+            {
+                NodeId = nodeId,
+                IsOnline = false,
+                BlockCount = 0,
+                UsedStorage = 0,
+                TotalStorage = 0
+            };
+        }
+
+
     }
 }
