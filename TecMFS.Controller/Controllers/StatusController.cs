@@ -2,7 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using TecMFS.Common.DTOs;
 using TecMFS.Common.Models;
 using TecMFS.Common.Constants;
-using static TecMFS.Controller.Controllers.FilesController;
+using TecMFS.Common.Interfaces;
 
 namespace TecMFS.Controller.Controllers
 {
@@ -12,9 +12,14 @@ namespace TecMFS.Controller.Controllers
     public class StatusController : ControllerBase
     {
         private readonly ILogger<StatusController> _logger;
-        public StatusController(ILogger<StatusController> logger)
+        private readonly IRaidManager _raidManager;
+        private readonly INodeHealthMonitor _nodeHealthMonitor;
+
+        public StatusController(ILogger<StatusController> logger, IRaidManager raidManager, INodeHealthMonitor nodeHealthMonitor)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _raidManager = raidManager ?? throw new ArgumentNullException(nameof(raidManager));
+            _nodeHealthMonitor = nodeHealthMonitor ?? throw new ArgumentNullException(nameof(nodeHealthMonitor));
         }
 
         // get: obtiene el estado general del sistema raid
@@ -24,19 +29,18 @@ namespace TecMFS.Controller.Controllers
         public async Task<IActionResult> GetRaidStatus()
         {
             _logger.LogInformation("Obteniendo estado general del sistema RAID");
-    
+
             try
             {
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
+                // USAR RAID MANAGER REAL
+                var raidStatus = await _raidManager.GetRaidStatusAsync();
+                var nodesStatus = await _nodeHealthMonitor.CheckAllNodesAsync();
 
-                // mock response para testing
-                var mockStatus = CreateMockRaidStatus();
+                raidStatus.Nodes = nodesStatus;
 
-                _logger.LogInformation($"Estado RAID obtenido exitosamente - Estado: {mockStatus.Status}, Nodos online: {mockStatus.OnlineNodes}/{SystemConstants.RAID_TOTAL_NODES}");
-                return Ok(mockStatus);
-
+                _logger.LogInformation($"Estado RAID obtenido exitosamente - Estado: {raidStatus.Status}, Nodos online: {raidStatus.OnlineNodes}/{SystemConstants.RAID_TOTAL_NODES}");
+                return Ok(raidStatus);
             }
-
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error critico obteniendo estado del sistema RAID");
@@ -49,8 +53,6 @@ namespace TecMFS.Controller.Controllers
             }
         }
 
-
-
         // get: obtiene el estado de todos los nodos del sistema
         [HttpGet("nodes")]
         [ProducesResponseType(typeof(List<NodeStatus>), StatusCodes.Status200OK)]
@@ -61,14 +63,12 @@ namespace TecMFS.Controller.Controllers
 
             try
             {
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
+                // USAR NODE HEALTH MONITOR REAL
+                var nodesStatus = await _nodeHealthMonitor.CheckAllNodesAsync();
 
-                // mock response para testing
-                var mockNodes = CreateMockNodesStatus();
-
-                var onlineCount = mockNodes.Count(n => n.IsOnline);
-                _logger.LogInformation($"Estado de nodos obtenido exitosamente - Online: {onlineCount}/{mockNodes.Count}");
-                return Ok(mockNodes);
+                var onlineCount = nodesStatus.Count(n => n.IsOnline);
+                _logger.LogInformation($"Estado de nodos obtenido exitosamente - Online: {onlineCount}/{nodesStatus.Count}");
+                return Ok(nodesStatus);
             }
             catch (Exception ex)
             {
@@ -81,8 +81,6 @@ namespace TecMFS.Controller.Controllers
                 });
             }
         }
-
-
 
         // get: health check simple del controller
         [HttpGet("health")]
@@ -119,8 +117,6 @@ namespace TecMFS.Controller.Controllers
             }
         }
 
-
-
         // get: estadisticas detalladas del sistema
         [HttpGet("stats")]
         [ProducesResponseType(typeof(SystemStatsResponse), StatusCodes.Status200OK)]
@@ -131,13 +127,50 @@ namespace TecMFS.Controller.Controllers
 
             try
             {
-                // TODO: Jose reemplazara esto con logica real del RaidManager y NodeHealthMonitor
-                // var stats = await _raidManager.GetSystemStatsAsync();
+                // USAR SERVICIOS REALES
+                var raidStatus = await _raidManager.GetRaidStatusAsync();
+                var nodesStatus = await _nodeHealthMonitor.CheckAllNodesAsync();
+                var availabilityStats = _nodeHealthMonitor.GetAvailabilityStats();
 
-                // mock response para testing
-                var mockStats = CreateMockSystemStats();
+                var stats = new SystemStatsResponse
+                {
+                    SystemInfo = new SystemInfo
+                    {
+                        Version = "1.0.0",
+                        StartTime = DateTime.UtcNow.AddHours(-2),
+                        Uptime = GetControllerUptime(),
+                        Environment = "Development"
+                    },
+                    RaidInfo = new RaidInfo
+                    {
+                        TotalNodes = SystemConstants.RAID_TOTAL_NODES,
+                        OnlineNodes = availabilityStats.OnlineNodes,
+                        OfflineNodes = availabilityStats.OfflineNodes,
+                        RaidLevel = "RAID 5",
+                        BlockSize = SystemConstants.DEFAULT_BLOCK_SIZE,
+                        Status = availabilityStats.SystemStatus
+                    },
+                    StorageInfo = new StorageInfo
+                    {
+                        TotalCapacity = nodesStatus.Sum(n => n.TotalStorage),
+                        UsedSpace = nodesStatus.Sum(n => n.UsedStorage),
+                        AvailableSpace = nodesStatus.Sum(n => n.AvailableStorage),
+                        UsagePercentage = nodesStatus.Sum(n => n.StorageUsagePercentage) / nodesStatus.Count,
+                        TotalFiles = raidStatus.TotalFiles,
+                        TotalBlocks = raidStatus.TotalBlocks
+                    },
+                    PerformanceInfo = new PerformanceInfo
+                    {
+                        AverageResponseTime = nodesStatus.Where(n => n.IsOnline).Average(n => n.ResponseTimeMs),
+                        TotalRequests = 0, // esto podria ser un contador interno
+                        SuccessfulRequests = 0,
+                        FailedRequests = 0,
+                        SuccessRate = availabilityStats.AvailabilityPercentage
+                    }
+                };
 
-                _logger.LogInformation($"Estadisticas obtenidas exitosamente - Archivos: {mockStats.StorageInfo.TotalFiles}, Almacenamiento usado: {FormatBytes(mockStats.StorageInfo.UsedSpace)}"); return Ok(mockStats);
+                _logger.LogInformation($"Estadisticas obtenidas exitosamente - Archivos: {stats.StorageInfo.TotalFiles}, Almacenamiento usado: {FormatBytes(stats.StorageInfo.UsedSpace)}");
+                return Ok(stats);
             }
             catch (Exception ex)
             {
@@ -155,152 +188,12 @@ namespace TecMFS.Controller.Controllers
         // metodos privados helper
         // ================================
 
-        // crea estado mock del sistema raid
-        private StatusResponse CreateMockRaidStatus()
-        {
-            var mockNodes = CreateMockNodesStatus();
-            var onlineNodes = mockNodes.Count(n => n.IsOnline);
-
-            return new StatusResponse
-            {
-                ComponentName = "TecMFS RAID System",
-                Status = onlineNodes >= SystemConstants.RAID_TOTAL_NODES ?
-                    StatusResponse.ComponentStatus.Healthy :
-                    StatusResponse.ComponentStatus.Warning,
-                Message = onlineNodes >= SystemConstants.RAID_TOTAL_NODES ?
-                    "Sistema RAID funcionando correctamente" :
-                    "Algunos nodos estan offline",
-                Timestamp = DateTime.UtcNow,
-                Version = "1.0.0",
-                Uptime = GetControllerUptime(),
-                Nodes = mockNodes,
-                TotalFiles = 15,
-                TotalBlocks = 45,
-                UsedStorage = 1024L * 1024L * 50L, // 50MB  
-                TotalStorage = 1024L * 1024L * 1024L * 10L, // 10GB
-                ErrorCount = onlineNodes < SystemConstants.RAID_TOTAL_NODES ? 1 : 0,
-                LastError = onlineNodes < SystemConstants.RAID_TOTAL_NODES ? "Nodo 3 offline" : ""
-            };
-        }
-
-
-
-        // crea estado mock de todos los nodos
-        private List<NodeStatus> CreateMockNodesStatus()
-        {
-            return new List<NodeStatus>
-            {
-                new NodeStatus
-                {
-                    NodeId = 1,
-                    IsOnline = true,
-                    BaseUrl = SystemConstants.GetDiskNodeBaseUrl(1),
-                    TotalStorage = 1024L * 1024L * 1024L * 2L, // 2GB
-                    UsedStorage = 1024L * 1024L * 200L, // 200MB
-                    LastHeartbeat = DateTime.UtcNow.AddSeconds(-5),
-                    ResponseTimeMs = 45.2,
-                    ErrorCount = 0,
-                    Version = "1.0.0"
-                },
-                new NodeStatus
-                {
-                    NodeId = 2,
-                    IsOnline = true,
-                    BaseUrl = SystemConstants.GetDiskNodeBaseUrl(2),
-                    TotalStorage = 1024L * 1024L * 1024L * 2L, // 2GB
-                    UsedStorage = 1024L * 1024L * 180L, // 180MB
-                    LastHeartbeat = DateTime.UtcNow.AddSeconds(-8),
-                    ResponseTimeMs = 52.1,
-                    ErrorCount = 0,
-                    Version = "1.0.0"
-                },
-                new NodeStatus
-                {
-                    NodeId = 3,
-                    IsOnline = false, // simular nodo offline
-                    BaseUrl = SystemConstants.GetDiskNodeBaseUrl(3),
-                    TotalStorage = 1024L * 1024L * 1024L * 2L, // 2GB
-                    UsedStorage = 1024L * 1024L * 190L, // 190MB
-                    LastHeartbeat = DateTime.UtcNow.AddMinutes(-5), // ultimo heartbeat hace 5 minutos
-                    ResponseTimeMs = 0,
-                    ErrorCount = 3,
-                    Version = "1.0.0"
-                },
-                new NodeStatus
-                {
-                    NodeId = 4,
-                    IsOnline = true,
-                    BaseUrl = SystemConstants.GetDiskNodeBaseUrl(4),
-                    TotalStorage = 1024L * 1024L * 1024L * 2L, // 2GB
-                    UsedStorage = 1024L * 1024L * 175L, // 175MB
-                    LastHeartbeat = DateTime.UtcNow.AddSeconds(-3),
-                    ResponseTimeMs = 38.7,
-                    ErrorCount = 0,
-                    Version = "1.0.0"
-                }
-            };
-        }
-
-
-
-        // obtiene el uptime del controller (simulado)
         private TimeSpan GetControllerUptime()
         {
             // simular que el controller ha estado corriendo por 2 horas
             return TimeSpan.FromHours(2) + TimeSpan.FromMinutes(35) + TimeSpan.FromSeconds(22);
         }
 
-
-
-        // crea estadisticas mock del sistema
-        private SystemStatsResponse CreateMockSystemStats()
-        {
-            var nodes = CreateMockNodesStatus();
-            var onlineNodes = nodes.Count(n => n.IsOnline);
-            var totalStorage = nodes.Sum(n => n.TotalStorage);
-            var usedStorage = nodes.Sum(n => n.UsedStorage);
-
-            return new SystemStatsResponse
-            {
-                SystemInfo = new SystemInfo
-                {
-                    Version = "1.0.0",
-                    StartTime = DateTime.UtcNow.AddHours(-2), // sistema iniciado hace 2 horas
-                    Uptime = GetControllerUptime(),
-                    Environment = "Development"
-                },
-                RaidInfo = new RaidInfo
-                {
-                    TotalNodes = SystemConstants.RAID_TOTAL_NODES,
-                    OnlineNodes = onlineNodes,
-                    OfflineNodes = SystemConstants.RAID_TOTAL_NODES - onlineNodes,
-                    RaidLevel = "RAID 5",
-                    BlockSize = SystemConstants.DEFAULT_BLOCK_SIZE,
-                    Status = onlineNodes >= SystemConstants.RAID_TOTAL_NODES ? "Healthy" : "Degraded"
-                },
-                StorageInfo = new StorageInfo
-                {
-                    TotalCapacity = totalStorage,
-                    UsedSpace = usedStorage,
-                    AvailableSpace = totalStorage - usedStorage,
-                    UsagePercentage = totalStorage > 0 ? (double)usedStorage / totalStorage * 100 : 0,
-                    TotalFiles = 15,
-                    TotalBlocks = 45
-                },
-                PerformanceInfo = new PerformanceInfo
-                {
-                    AverageResponseTime = nodes.Where(n => n.IsOnline).Average(n => n.ResponseTimeMs),
-                    TotalRequests = 1250,
-                    SuccessfulRequests = 1235,
-                    FailedRequests = 15,
-                    SuccessRate = 98.8
-                }
-            };
-        }
-
-
-
-        // formatea bytes en formato legible
         private string FormatBytes(long bytes)
         {
             if (bytes < 1024) return $"{bytes} B";
@@ -312,6 +205,14 @@ namespace TecMFS.Controller.Controllers
         // ================================
         // clases helper para responses
         // ================================
+
+        public class ErrorResponse
+        {
+            public string Error { get; set; } = string.Empty;
+            public string Message { get; set; } = string.Empty;
+            public string RequestId { get; set; } = string.Empty;
+            public DateTime Timestamp { get; set; } = DateTime.UtcNow;
+        }
 
         public class HealthResponse
         {
@@ -368,6 +269,5 @@ namespace TecMFS.Controller.Controllers
             public long FailedRequests { get; set; }
             public double SuccessRate { get; set; }
         }
-
     }
 }

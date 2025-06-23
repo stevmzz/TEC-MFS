@@ -29,6 +29,9 @@ builder.Services.AddLogging(config =>
     config.SetMinimumLevel(LogLevel.Information);
 });
 
+builder.Services.AddSingleton<IRaidManager, RaidManager>();
+builder.Services.AddSingleton<INodeHealthMonitor, NodeHealthMonitor>();
+
 var app = builder.Build();
 
 // Configure the HTTP request pipeline.

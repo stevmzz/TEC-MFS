@@ -2,18 +2,22 @@ using Microsoft.AspNetCore.Mvc;
 using TecMFS.Common.DTOs;
 using TecMFS.Common.Models;
 using TecMFS.Common.Constants;
+using TecMFS.Common.Interfaces;
 
 namespace TecMFS.DiskNode.Controllers
 {
     [ApiController]
-    [Route("api/[controller]")]
+    [Route("api/blocks")]
     [Produces("application/json")]
     public class BlockController : ControllerBase
     {
         private readonly ILogger<BlockController> _logger;
-        public BlockController(ILogger<BlockController> logger)
+        private readonly IBlockStorage _blockStorage;
+
+        public BlockController(ILogger<BlockController> logger, IBlockStorage blockStorage)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _blockStorage = blockStorage ?? throw new ArgumentNullException(nameof(blockStorage));
         }
 
         // post: almacena un bloque de datos en el nodo
@@ -24,6 +28,17 @@ namespace TecMFS.DiskNode.Controllers
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> StoreBlock([FromBody] BlockRequest request)
         {
+            _logger.LogInformation($"=== RECIBIENDO REQUEST DE BLOQUE ===");
+            _logger.LogInformation($"Request es null: {request == null}");
+            if (request != null)
+            {
+                _logger.LogInformation($"BlockId: '{request.BlockId}'");
+                _logger.LogInformation($"BlockData es null: {request.BlockData == null}");
+                _logger.LogInformation($"BlockData.Length: {request.BlockData?.Length ?? 0}");
+                _logger.LogInformation($"Operation: {request.Operation}");
+                _logger.LogInformation($"IsParityBlock: {request.IsParityBlock}");
+            }
+
             var sizeInKb = request.BlockData.Length / 1024.0;
             _logger.LogInformation($"Iniciando almacenamiento de bloque: {request.BlockId}, Tamaño: {sizeInKb:F1} KB, Es paridad: {request.IsParityBlock}");
 
@@ -43,7 +58,7 @@ namespace TecMFS.DiskNode.Controllers
                 }
 
                 // verificar espacio disponible
-                var availableSpace = GetAvailableSpace();
+                var availableSpace = await _blockStorage.GetAvailableSpaceAsync();
                 if (request.BlockData.Length > availableSpace)
                 {
                     _logger.LogWarning($"Espacio insuficiente para bloque: {request.BlockId}, Requerido: {sizeInKb:F1} KB, Disponible: {availableSpace / 1024.0:F1} KB");
@@ -55,25 +70,36 @@ namespace TecMFS.DiskNode.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
+                // USAR BLOCK STORAGE REAL
+                var success = await _blockStorage.StoreBlockAsync(request.BlockId, request.BlockData);
 
-                // mock response para testing
-                var mockResponse = new BlockStoreResponse
+                if (success)
                 {
-                    Success = true,
-                    BlockId = request.BlockId,
-                    BlockSize = request.BlockData.Length,
-                    StoredAt = DateTime.UtcNow,
-                    NodeId = GetCurrentNodeId(),
-                    IsParityBlock = request.IsParityBlock,
-                    CheckSum = CalculateMockChecksum(request.BlockData),
-                    Message = "Bloque almacenado exitosamente"
-                };
+                    var response = new BlockStoreResponse
+                    {
+                        Success = true,
+                        BlockId = request.BlockId,
+                        BlockSize = request.BlockData.Length,
+                        StoredAt = DateTime.UtcNow,
+                        NodeId = GetCurrentNodeId(),
+                        IsParityBlock = request.IsParityBlock,
+                        CheckSum = CalculateChecksum(request.BlockData),
+                        Message = "Bloque almacenado exitosamente"
+                    };
 
-                _logger.LogInformation($"Bloque almacenado exitosamente: {request.BlockId}, Checksum: {mockResponse.CheckSum}");
-                return Ok(mockResponse);
+                    _logger.LogInformation($"Bloque almacenado exitosamente: {request.BlockId}, Checksum: {response.CheckSum}");
+                    return Ok(response);
+                }
+                else
+                {
+                    return StatusCode(500, new ErrorResponse
+                    {
+                        Error = "Error almacenando bloque",
+                        Message = "No se pudo almacenar el bloque",
+                        RequestId = request.RequestId
+                    });
+                }
             }
-
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error critico almacenando bloque: {request.BlockId}");
@@ -86,8 +112,6 @@ namespace TecMFS.DiskNode.Controllers
             }
         }
 
-
-
         // get: recupera un bloque especifico por su id
         [HttpGet("retrieve/{blockId}")]
         [ProducesResponseType(typeof(BlockRetrieveResponse), StatusCodes.Status200OK)]
@@ -99,7 +123,6 @@ namespace TecMFS.DiskNode.Controllers
 
             try
             {
-                // validar blockId
                 if (string.IsNullOrWhiteSpace(blockId))
                 {
                     _logger.LogWarning("BlockId vacio para recuperacion");
@@ -111,11 +134,10 @@ namespace TecMFS.DiskNode.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
+                // USAR BLOCK STORAGE REAL
+                var blockData = await _blockStorage.RetrieveBlockAsync(blockId);
 
-                // mock response para testing
-                var mockData = CreateMockBlockData(blockId);
-                if (mockData == null)
+                if (blockData == null)
                 {
                     _logger.LogWarning($"Bloque no encontrado: {blockId}");
                     return NotFound(new ErrorResponse
@@ -129,18 +151,17 @@ namespace TecMFS.DiskNode.Controllers
                 var response = new BlockRetrieveResponse
                 {
                     BlockId = blockId,
-                    BlockData = mockData,
-                    BlockSize = mockData.Length,
+                    BlockData = blockData,
+                    BlockSize = blockData.Length,
                     RetrievedAt = DateTime.UtcNow,
                     NodeId = GetCurrentNodeId(),
-                    CheckSum = CalculateMockChecksum(mockData)
+                    CheckSum = CalculateChecksum(blockData)
                 };
 
-                var sizeInKb = mockData.Length / 1024.0;
+                var sizeInKb = blockData.Length / 1024.0;
                 _logger.LogInformation($"Bloque recuperado exitosamente: {blockId}, Tamaño: {sizeInKb:F1} KB");
                 return Ok(response);
             }
-
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error critico recuperando bloque: {blockId}");
@@ -153,8 +174,6 @@ namespace TecMFS.DiskNode.Controllers
             }
         }
 
-
-
         // delete: elimina un bloque del nodo
         [HttpDelete("delete/{blockId}")]
         [ProducesResponseType(typeof(BlockDeleteResponse), StatusCodes.Status200OK)]
@@ -166,7 +185,6 @@ namespace TecMFS.DiskNode.Controllers
 
             try
             {
-                // validar blockId
                 if (string.IsNullOrWhiteSpace(blockId))
                 {
                     _logger.LogWarning("BlockId vacio para eliminacion");
@@ -178,11 +196,9 @@ namespace TecMFS.DiskNode.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
-
-                // mock response para testing
-                var mockResult = SimulateDeleteBlock(blockId);
-                if (!mockResult.Success)
+                // USAR BLOCK STORAGE REAL
+                var exists = await _blockStorage.BlockExistsAsync(blockId);
+                if (!exists)
                 {
                     _logger.LogWarning($"Bloque no encontrado para eliminacion: {blockId}");
                     return NotFound(new ErrorResponse
@@ -193,8 +209,30 @@ namespace TecMFS.DiskNode.Controllers
                     });
                 }
 
-                _logger.LogInformation($"Bloque eliminado exitosamente: {blockId}");
-                return Ok(mockResult);
+                var success = await _blockStorage.DeleteBlockAsync(blockId);
+                if (success)
+                {
+                    var result = new BlockDeleteResponse
+                    {
+                        Success = true,
+                        BlockId = blockId,
+                        DeletedAt = DateTime.UtcNow,
+                        NodeId = GetCurrentNodeId(),
+                        Message = "Bloque eliminado exitosamente"
+                    };
+
+                    _logger.LogInformation($"Bloque eliminado exitosamente: {blockId}");
+                    return Ok(result);
+                }
+                else
+                {
+                    return StatusCode(500, new ErrorResponse
+                    {
+                        Error = "Error eliminando bloque",
+                        Message = "No se pudo eliminar el bloque",
+                        RequestId = Guid.NewGuid().ToString()
+                    });
+                }
             }
             catch (Exception ex)
             {
@@ -208,8 +246,6 @@ namespace TecMFS.DiskNode.Controllers
             }
         }
 
-
-
         // head: verifica si un bloque existe sin retornar datos
         [HttpHead("exists/{blockId}")]
         [ProducesResponseType(StatusCodes.Status200OK)]
@@ -220,11 +256,8 @@ namespace TecMFS.DiskNode.Controllers
 
             try
             {
-                // TODO: Sebas reemplazara esto con logica real del BlockStorage
-                // var exists = await _blockStorage.BlockExistsAsync(blockId);
-
-                // mock response para testing
-                var exists = CheckBlockExists(blockId);
+                // USAR BLOCK STORAGE REAL
+                var exists = await _blockStorage.BlockExistsAsync(blockId);
 
                 if (exists)
                 {
@@ -244,8 +277,6 @@ namespace TecMFS.DiskNode.Controllers
             }
         }
 
-
-
         // get: lista todos los bloques almacenados en el nodo
         [HttpGet("list")]
         [ProducesResponseType(typeof(BlockListResponse), StatusCodes.Status200OK)]
@@ -256,15 +287,12 @@ namespace TecMFS.DiskNode.Controllers
 
             try
             {
-                // TODO: Sebas reemplazara esto con logica real del BlockStorage
-                // var blockIds = await _blockStorage.ListBlocksAsync();
-
-                // mock response para testing
-                var mockBlocks = CreateMockBlockList();
+                // USAR BLOCK STORAGE REAL
+                var blockIds = await _blockStorage.ListBlocksAsync();
                 var response = new BlockListResponse
                 {
-                    BlockIds = mockBlocks,
-                    TotalBlocks = mockBlocks.Count,
+                    BlockIds = blockIds,
+                    TotalBlocks = blockIds.Count,
                     NodeId = GetCurrentNodeId(),
                     GeneratedAt = DateTime.UtcNow
                 };
@@ -284,8 +312,6 @@ namespace TecMFS.DiskNode.Controllers
             }
         }
 
-
-
         // get: obtiene informacion y estadisticas del nodo
         [HttpGet("info")]
         [ProducesResponseType(typeof(NodeInfoResponse), StatusCodes.Status200OK)]
@@ -296,12 +322,10 @@ namespace TecMFS.DiskNode.Controllers
 
             try
             {
-                // TODO: Sebas reemplazara esto con logica real del BlockStorage
-                // var nodeInfo = await _blockStorage.GetNodeInfoAsync();
-
-                // mock response para testing
-                var totalStorage = 1024L * 1024L * 1024L * 2L; // 2GB
-                var usedStorage = 1024L * 1024L * 300L; // 300MB
+                // USAR BLOCK STORAGE REAL
+                var totalStorage = await _blockStorage.GetAvailableSpaceAsync() + await _blockStorage.GetUsedSpaceAsync();
+                var usedStorage = await _blockStorage.GetUsedSpaceAsync();
+                var blockIds = await _blockStorage.ListBlocksAsync();
 
                 var response = new NodeInfoResponse
                 {
@@ -309,12 +333,12 @@ namespace TecMFS.DiskNode.Controllers
                     TotalStorage = totalStorage,
                     UsedStorage = usedStorage,
                     AvailableStorage = totalStorage - usedStorage,
-                    TotalBlocks = 25,
-                    ParityBlocks = 6,
-                    DataBlocks = 19,
+                    TotalBlocks = blockIds.Count,
+                    ParityBlocks = blockIds.Count(b => b.Contains("parity")),
+                    DataBlocks = blockIds.Count(b => !b.Contains("parity")),
                     Status = "Healthy",
                     Version = "1.0.0",
-                    StartTime = DateTime.UtcNow.AddHours(-1), // nodo activo por 1 hora
+                    StartTime = DateTime.UtcNow.AddHours(-1),
                     LastMaintenance = DateTime.UtcNow.AddDays(-1)
                 };
 
@@ -333,8 +357,6 @@ namespace TecMFS.DiskNode.Controllers
             }
         }
 
-
-
         // get: health check del nodo
         [HttpGet("health")]
         [ProducesResponseType(typeof(NodeHealthResponse), StatusCodes.Status200OK)]
@@ -350,7 +372,7 @@ namespace TecMFS.DiskNode.Controllers
                     NodeId = GetCurrentNodeId(),
                     Status = "Healthy",
                     Timestamp = DateTime.UtcNow,
-                    ResponseTimeMs = 15.5, // tiempo de respuesta simulado
+                    ResponseTimeMs = 15.5,
                     Version = "1.0.0",
                     Uptime = TimeSpan.FromHours(1) + TimeSpan.FromMinutes(23),
                     ErrorCount = 0,
@@ -376,12 +398,11 @@ namespace TecMFS.DiskNode.Controllers
         // metodos privados helper
         // ================================
 
-        // valida un request de bloque
         private ValidationResult ValidateBlockRequest(BlockRequest request)
         {
             if (request == null)
                 return new ValidationResult { IsValid = false, ErrorMessage = "Request no puede ser nulo" };
-          
+
             if (string.IsNullOrWhiteSpace(request.BlockId))
                 return new ValidationResult { IsValid = false, ErrorMessage = "BlockId es requerido" };
 
@@ -394,7 +415,6 @@ namespace TecMFS.DiskNode.Controllers
             return new ValidationResult { IsValid = true };
         }
 
-        // formatea bytes en formato legible
         private string FormatBytes(long bytes)
         {
             if (bytes < 1024) return $"{bytes} B";
@@ -403,94 +423,18 @@ namespace TecMFS.DiskNode.Controllers
             return $"{bytes / 1073741824.0:F1} GB";
         }
 
-
-
-        // obtiene espacio disponible (simulado)
-        private long GetAvailableSpace()
-        {
-            // simular 1.7GB disponible
-            return 1024L * 1024L * 1024L + 1024L * 1024L * 700L;
-        }
-
-
-
-        // obtiene el id del nodo actual (simulado)
         private int GetCurrentNodeId()
         {
-            // TODO: Sebas deberia leer esto de configuracion
-            return 1; // simular nodo 1
+            // TODO: leer de configuración - por ahora simular nodo 1
+            return 1;
         }
 
-
-
-        // calcula checksum mock para testing
-        private string CalculateMockChecksum(byte[] data)
+        private string CalculateChecksum(byte[] data)
         {
-            // TODO: Sebas implementara checksum real
-            return $"MOCK_{data.Length}_{data.Take(4).Sum(b => b):X}";
-        }
-
-
-
-        // crea datos mock de bloque
-        private byte[]? CreateMockBlockData(string blockId)
-        {
-            // simular que bloques que contienen "test" o numeros existen
-            if (blockId.Contains("test") || blockId.Any(char.IsDigit))
-            {
-                var random = new Random(blockId.GetHashCode()); // seed consistente
-                var data = new byte[SystemConstants.DEFAULT_BLOCK_SIZE];
-                random.NextBytes(data);
-                return data;
-            }
-            return null; // bloque no existe
-        }
-
-
-
-        // simula eliminacion de bloque
-        private BlockDeleteResponse SimulateDeleteBlock(string blockId)
-        {
-            // simular que bloques que contienen "test" o numeros existen
-            if (blockId.Contains("test") || blockId.Any(char.IsDigit))
-            {
-                return new BlockDeleteResponse
-                {
-                    Success = true,
-                    BlockId = blockId,
-                    DeletedAt = DateTime.UtcNow,
-                    NodeId = GetCurrentNodeId(),
-                    Message = "Bloque eliminado exitosamente"
-                };
-            }
-
-            return new BlockDeleteResponse { Success = false };
-        }
-
-
-
-        // verifica si un bloque existe (simulado)
-        private bool CheckBlockExists(string blockId)
-        {
-            // simular que bloques que contienen "test" o numeros existen
-            return blockId.Contains("test") || blockId.Any(char.IsDigit);
-        }
-
-
-
-        // crea lista mock de bloques
-        private List<string> CreateMockBlockList()
-        {
-            return new List<string>
-            {
-                "block_001_data",
-                "block_002_data",
-                "block_003_parity",
-                "block_004_data",
-                "block_005_data",
-                "test_block_001",
-                "test_block_002"
-            };
+            // usar sha256 simple
+            using var sha256 = System.Security.Cryptography.SHA256.Create();
+            var hash = sha256.ComputeHash(data);
+            return Convert.ToHexString(hash);
         }
 
         // ================================
@@ -576,6 +520,5 @@ namespace TecMFS.DiskNode.Controllers
             public int ErrorCount { get; set; }
             public string LastError { get; set; } = string.Empty;
         }
-
     }
 }

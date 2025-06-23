@@ -177,6 +177,10 @@ namespace TecMFS.Common.Interfaces
         // detiene monitoreo continuo
         void StopMonitoring();
 
+        // obtiene estadisticas de disponibilidad del sistema
+        // returns: estadisticas completas de disponibilidad
+        NodeAvailabilityStats GetAvailabilityStats();
+
         // evento que se dispara cuando un nodo falla
         event EventHandler<NodeFailureEventArgs> NodeFailureDetected;
 
@@ -256,5 +260,20 @@ namespace TecMFS.Common.Interfaces
         public DateTime RecoveryTime { get; set; } = DateTime.UtcNow;
         public TimeSpan DownTime { get; set; }
         public NodeStatus CurrentStatus { get; set; } = new NodeStatus();
+    }
+
+    // ================================
+    // CLASE PARA ESTADISTICAS DE DISPONIBILIDAD
+    // ================================
+
+    // estadisticas de disponibilidad de nodos del sistema
+    public class NodeAvailabilityStats
+    {
+        public int TotalNodes { get; set; }
+        public int OnlineNodes { get; set; }
+        public int HealthyNodes { get; set; }
+        public int OfflineNodes { get; set; }
+        public double AvailabilityPercentage { get; set; }
+        public string SystemStatus { get; set; } = string.Empty;
     }
 }

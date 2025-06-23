@@ -2,6 +2,7 @@ using Microsoft.AspNetCore.Mvc;
 using TecMFS.Common.DTOs;
 using TecMFS.Common.Models;
 using TecMFS.Common.Constants;
+using TecMFS.Common.Interfaces;
 using System.ComponentModel.DataAnnotations;
 
 namespace TecMFS.Controller.Controllers
@@ -12,9 +13,12 @@ namespace TecMFS.Controller.Controllers
     public class FilesController : ControllerBase
     {
         private readonly ILogger<FilesController> _logger;
-        public FilesController(ILogger<FilesController> logger)
+        private readonly IRaidManager _raidManager;
+
+        public FilesController(ILogger<FilesController> logger, IRaidManager raidManager)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
+            _raidManager = raidManager ?? throw new ArgumentNullException(nameof(raidManager));
         }
 
         // post: sube un archivo pdf al sistema raid
@@ -25,7 +29,7 @@ namespace TecMFS.Controller.Controllers
         public async Task<IActionResult> UploadFile([FromBody] UploadRequest request)
         {
             _logger.LogInformation($"Iniciando carga de archivo: {request.FileName}, Tamaño: {request.FileSizeFormatted}");
-            
+
             try
             {
                 var validationResults = ValidateUploadRequest(request);
@@ -40,25 +44,36 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
+                // USAR RAID MANAGER REAL
+                var success = await _raidManager.StoreFileAsync(request);
 
-                // mock response para testing
-                var response = new UploadResponse
+                if (success)
                 {
-                    Success = true,
-                    FileId = Guid.NewGuid().ToString(),
-                    FileName = request.FileName,
-                    FileSize = request.FileSize,
-                    UploadedAt = DateTime.UtcNow,
-                    Message = "Archivo subido correctamente",
-                    BlocksCreated = CalculateBlockCount(request.FileSize),
-                    NodesUsed = SystemConstants.RAID_TOTAL_NODES
-                };
+                    var response = new UploadResponse
+                    {
+                        Success = true,
+                        FileId = Guid.NewGuid().ToString(),
+                        FileName = request.FileName,
+                        FileSize = request.FileSize,
+                        UploadedAt = DateTime.UtcNow,
+                        Message = "Archivo subido correctamente",
+                        BlocksCreated = CalculateBlockCount(request.FileSize),
+                        NodesUsed = SystemConstants.RAID_TOTAL_NODES
+                    };
 
-                _logger.LogInformation($"Archivo cargado exitosamente: {request.FileName}, FileId: {response.FileId}, Bloques: {response.BlocksCreated}");
-                return Ok(response);
+                    _logger.LogInformation($"Archivo cargado exitosamente: {request.FileName}, Bloques: {response.BlocksCreated}");
+                    return Ok(response);
+                }
+                else
+                {
+                    return StatusCode(500, new ErrorResponse
+                    {
+                        Error = "Error almacenando archivo",
+                        Message = "No se pudo almacenar el archivo en el sistema RAID",
+                        RequestId = Guid.NewGuid().ToString()
+                    });
+                }
             }
-
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error critico durante carga de archivo: {request.FileName}");
@@ -71,9 +86,7 @@ namespace TecMFS.Controller.Controllers
             }
         }
 
-
-
-        // get: descarga un archivo del sistema raid por su nombre}
+        // get: descarga un archivo del sistema raid por su nombre
         [HttpGet("download/{fileName}")]
         [ProducesResponseType(typeof(FileContentResult), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status404NotFound)]
@@ -81,7 +94,7 @@ namespace TecMFS.Controller.Controllers
         public async Task<IActionResult> DownloadFile([FromRoute] string fileName)
         {
             _logger.LogInformation($"Iniciando descarga de archivo: {fileName}");
-               
+
             try
             {
                 if (string.IsNullOrEmpty(fileName) || !fileName.EndsWith(".pdf", StringComparison.OrdinalIgnoreCase))
@@ -95,11 +108,10 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
+                // USAR RAID MANAGER REAL
+                var fileData = await _raidManager.RetrieveFileAsync(fileName);
 
-                // mock response para testing
-                var mockFileData = CreateMockPdfData(fileName);
-                if (mockFileData == null)
+                if (fileData == null)
                 {
                     _logger.LogWarning($"Archivo no encontrado: {fileName}");
                     return NotFound(new ErrorResponse
@@ -110,10 +122,9 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                _logger.LogInformation($"Archivo descargado exitosamente: {fileName}, Tamaño: {mockFileData.Length} bytes");
-                return File(mockFileData, "application/pdf", fileName);
+                _logger.LogInformation($"Archivo descargado exitosamente: {fileName}, Tamaño: {fileData.Length} bytes");
+                return File(fileData, "application/pdf", fileName);
             }
-
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error critico durante descarga de archivo: {fileName}");
@@ -123,15 +134,12 @@ namespace TecMFS.Controller.Controllers
                     Message = "Error procesando la descarga del archivo",
                     RequestId = Guid.NewGuid().ToString()
                 });
-
             }
         }
 
-
-
         // get: lista todos los archivos disponibles en el sistema
         [HttpGet("list")]
-        [ProducesResponseType(typeof(List<UploadResponse>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(FileListResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
         public async Task<IActionResult> ListFiles()
         {
@@ -139,23 +147,19 @@ namespace TecMFS.Controller.Controllers
 
             try
             {
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
-
-                // mock response para testing
-                // mock response para testing
-                var mockFiles = CreateMockFileList();
+                // USAR RAID MANAGER REAL
+                var files = await _raidManager.ListFilesAsync();
                 var response = new FileListResponse
                 {
-                    Files = mockFiles,
-                    TotalCount = mockFiles.Count,
-                    TotalSize = mockFiles.Sum(f => f.FileSize),
+                    Files = files,
+                    TotalCount = files.Count,
+                    TotalSize = files.Sum(f => f.FileSize),
                     GeneratedAt = DateTime.UtcNow
                 };
 
                 _logger.LogInformation($"Lista de archivos generada exitosamente: {response.TotalCount} archivos, Tamaño total: {FormatBytes(response.TotalSize)}");
                 return Ok(response);
             }
-
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error critico obteniendo lista de archivos");
@@ -168,11 +172,9 @@ namespace TecMFS.Controller.Controllers
             }
         }
 
-
-
-        // ger: busca archivos por nombre o termino de busqueda
+        // get: busca archivos por nombre o termino de busqueda
         [HttpGet("search")]
-        [ProducesResponseType(typeof(List<UploadResponse>), StatusCodes.Status200OK)]
+        [ProducesResponseType(typeof(FileListResponse), StatusCodes.Status200OK)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status500InternalServerError)]
         [ProducesResponseType(typeof(ErrorResponse), StatusCodes.Status400BadRequest)]
         public async Task<IActionResult> SearchFiles([FromQuery] string query)
@@ -181,7 +183,6 @@ namespace TecMFS.Controller.Controllers
 
             try
             {
-                // validar query de busqueda
                 if (string.IsNullOrWhiteSpace(query) || query.Length < 2)
                 {
                     _logger.LogWarning($"Termino de busqueda invalido: {query}");
@@ -193,24 +194,19 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
-
-                // mock response para testing
-                var allFiles = CreateMockFileList();
-                var filteredFiles = allFiles.Where(f => f.FileName.Contains(query, StringComparison.OrdinalIgnoreCase)).ToList();
-
+                // USAR RAID MANAGER REAL
+                var files = await _raidManager.SearchFilesAsync(query);
                 var response = new FileListResponse
                 {
-                    Files = filteredFiles,
-                    TotalCount = filteredFiles.Count,
-                    TotalSize = filteredFiles.Sum(f => f.FileSize),
+                    Files = files,
+                    TotalCount = files.Count,
+                    TotalSize = files.Sum(f => f.FileSize),
                     GeneratedAt = DateTime.UtcNow
                 };
 
                 _logger.LogInformation($"Busqueda completada: {response.TotalCount} archivos encontrados para termino '{query}'");
                 return Ok(response);
             }
-
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error critico durante busqueda de archivos con termino: {query}");
@@ -223,8 +219,6 @@ namespace TecMFS.Controller.Controllers
             }
         }
 
-
-
         // get: obtiene informacion de un archivo especifico
         [HttpGet("info/{fileName}")]
         [ProducesResponseType(typeof(FileMetadata), StatusCodes.Status200OK)]
@@ -236,7 +230,6 @@ namespace TecMFS.Controller.Controllers
 
             try
             {
-                // validar nombre de archivo
                 if (string.IsNullOrWhiteSpace(fileName))
                 {
                     _logger.LogWarning($"Nombre de archivo vacio para obtencion de info");
@@ -248,11 +241,10 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
+                // USAR RAID MANAGER REAL
+                var metadata = await _raidManager.GetFileMetadataAsync(fileName);
 
-                // mock response para testing
-                var mockMetadata = CreateMockFileMetadata(fileName);
-                if (mockMetadata == null)
+                if (metadata == null)
                 {
                     _logger.LogWarning($"Archivo no encontrado para info: {fileName}");
                     return NotFound(new ErrorResponse
@@ -263,10 +255,9 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                _logger.LogInformation($"Informacion de archivo obtenida exitosamente: {fileName}, Bloques: {mockMetadata.Blocks.Count}");
-                return Ok(mockMetadata);
+                _logger.LogInformation($"Informacion de archivo obtenida exitosamente: {fileName}, Bloques: {metadata.Blocks.Count}");
+                return Ok(metadata);
             }
-
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error critico obteniendo informacion de archivo: {fileName}");
@@ -279,8 +270,6 @@ namespace TecMFS.Controller.Controllers
             }
         }
 
-
-
         // delete: elimina un archivo del sistema raid
         [HttpDelete("delete/{fileName}")]
         [ProducesResponseType(typeof(DeleteResponse), StatusCodes.Status200OK)]
@@ -292,7 +281,6 @@ namespace TecMFS.Controller.Controllers
 
             try
             {
-                // validar nombre de archivo
                 if (string.IsNullOrWhiteSpace(fileName))
                 {
                     _logger.LogWarning($"Nombre de archivo vacio para eliminacion");
@@ -304,11 +292,10 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                // REEMPLAZAR CON LOGICA REAL DEL RAIDMANAGER
+                // USAR RAID MANAGER REAL
+                var success = await _raidManager.DeleteFileAsync(fileName);
 
-                // mock response para testing
-                var mockResult = SimulateDeleteOperation(fileName);
-                if (!mockResult.Success)
+                if (!success)
                 {
                     _logger.LogWarning($"Archivo no encontrado para eliminacion: {fileName}");
                     return NotFound(new ErrorResponse
@@ -319,10 +306,18 @@ namespace TecMFS.Controller.Controllers
                     });
                 }
 
-                _logger.LogInformation($"Archivo eliminado exitosamente: {fileName}, Bloques liberados: {mockResult.BlocksDeleted}");
-                return Ok(mockResult);
-            }
+                var result = new DeleteResponse
+                {
+                    Success = true,
+                    FileName = fileName,
+                    BlocksDeleted = CalculateBlockCount(1024 * 100), // estimacion
+                    DeletedAt = DateTime.UtcNow,
+                    Message = "Archivo eliminado exitosamente del sistema RAID"
+                };
 
+                _logger.LogInformation($"Archivo eliminado exitosamente: {fileName}");
+                return Ok(result);
+            }
             catch (Exception ex)
             {
                 _logger.LogError(ex, $"Error critico durante eliminacion de archivo: {fileName}");
@@ -336,10 +331,9 @@ namespace TecMFS.Controller.Controllers
         }
 
         // ================================
-        // metodos privados helper
+        // metodos privados helper (sin cambios)
         // ================================
 
-        // valida un request de upload
         private ValidationResult ValidateUploadRequest(UploadRequest request)
         {
             if (request == null)
@@ -360,9 +354,6 @@ namespace TecMFS.Controller.Controllers
             return new ValidationResult { IsValid = true };
         }
 
-
-
-        // formatea bytes en formato legible
         private string FormatBytes(long bytes)
         {
             if (bytes < 1024) return $"{bytes} B";
@@ -370,92 +361,9 @@ namespace TecMFS.Controller.Controllers
             return $"{bytes / 1048576.0:F1} MB";
         }
 
-
-
-        // calcula numero de bloques necesarios para un archivo
         private int CalculateBlockCount(long fileSize)
         {
             return SystemConstants.CalculateBlockCount(fileSize);
-        }
-
-
-
-        // crea datos mock de pdf para testing
-        private byte[]? CreateMockPdfData(string fileName)
-        {
-            // simular archivo existente
-            if (fileName.Contains("test") || fileName.Contains("ejemplo"))
-            {
-                var mockData = new byte[1024 * 50]; // 50kb mock pdf
-                var random = new Random();
-                random.NextBytes(mockData);
-                return mockData;
-            }
-            return null; // simular archivo no encontrado
-        }
-
-
-
-        // crea lista mock de archivos para testing
-        private List<FileMetadata> CreateMockFileList()
-        {
-            return new List<FileMetadata>
-            {
-                new FileMetadata
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    FileName = "test1.pdf",
-                    FileSize = 1024 * 100,
-                    UploadDate = DateTime.UtcNow.AddDays(-1),
-                    IsComplete = true
-                },
-                new FileMetadata
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    FileName = "test2.pdf",
-                    FileSize = 1024 * 200,
-                    UploadDate = DateTime.UtcNow.AddDays(-2),
-                    IsComplete = true
-                },
-                new FileMetadata
-                {
-                    Id = Guid.NewGuid().ToString(),
-                    FileName = "test3.pdf",
-                    FileSize = 1024 * 150,
-                    UploadDate = DateTime.UtcNow.AddDays(-3),
-                    IsComplete = true
-                }
-            };
-        }
-
-
-
-        // crea metadata mock para un archivo especifico
-        private FileMetadata? CreateMockFileMetadata(string fileName)
-        {
-            var files = CreateMockFileList();
-            return files.FirstOrDefault(f => f.FileName.Equals(fileName, StringComparison.OrdinalIgnoreCase));
-        }
-
-
-
-        // simula operacion de eliminacion
-        private DeleteResponse SimulateDeleteOperation(string fileName)
-        {
-            // simular archivo existente
-            if (fileName.Contains("test") || fileName.Contains("ejemplo"))
-            {
-                return new DeleteResponse
-                {
-                    Success = true,
-                    FileName = fileName,
-                    BlocksDeleted = CalculateBlockCount(1024 * 100),
-                    DeletedAt = DateTime.UtcNow,
-                    Message = "Archivo eliminado exitosamente del sistema RAID"
-                };
-            }
-
-            return new DeleteResponse { Success = false };
         }
 
         // ================================
@@ -504,6 +412,5 @@ namespace TecMFS.Controller.Controllers
             public DateTime DeletedAt { get; set; }
             public string Message { get; set; } = string.Empty;
         }
-
     }
 }

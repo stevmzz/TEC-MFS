@@ -1,9 +1,17 @@
+using TecMFS.Common.Interfaces;
+using TecMFS.DiskNode.Services;
+
 var builder = WebApplication.CreateBuilder(args);
 
 // Add services to the container.
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
 builder.Services.AddSwaggerGen();
+builder.Services.AddSingleton<IBlockStorage>(provider =>
+{
+    var logger = provider.GetService<ILogger<BlockStorage>>();
+    return new BlockStorage("./storage", logger);
+});
 
 var app = builder.Build();
 

@@ -84,13 +84,17 @@ namespace TecMFS.Controller.Services
         // envia request post con datos y deserializa respuesta
         public async Task<T?> SendPostAsync<T>(string url, object data)
         {
-            var client = GetOrCreateClient(url); // obtener cliente del pool
+            var client = GetOrCreateClient(url);
             _logger.LogInformation($"Iniciando POST request al endpoint: {url}");
 
             try
             {
-                var json = JsonConvert.SerializeObject(data); // serializar datos a json
-                var content = CreateCompressedContent(json, "application/json");
+                var json = JsonConvert.SerializeObject(data);
+
+                // TEMPORALMENTE DESHABILITAR COMPRESIÓN PARA DEBUG
+                var content = new StringContent(json, Encoding.UTF8, "application/json");
+
+                _logger.LogDebug($"JSON payload size: {json.Length} characters");
 
                 var response = await ExecuteWithRetryAsync(async () => await client.PostAsync(url, content));
 
