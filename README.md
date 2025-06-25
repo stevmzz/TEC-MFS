@@ -44,10 +44,50 @@ dotnet build
 
 ## Configuración
 
-- Configurar startup projects según requiera. Recomendación:
+### Startup Projects (Visual Studio)
 ```bash
 TecMFS.Controller → Start
-TecMFS.DiskNode   → Start
-TecMFS.GUI        → Start
+TecMFS.GUI        → Start  
+TecMFS.DiskNode   → None
 TecMFS.Common     → None
 ```
+
+### Ejecutar DiskNodes Manualmente
+Para implementación RAID 5 completa, ejecutar 4 instancias de DiskNode desde terminales separadas:
+
+**Terminal 1 (Nodo 1):**
+```bash
+cd "C:\ruta\a\tu\proyecto"
+cd TecMFS.DiskNode
+dotnet run --urls="http://localhost:5001"
+```
+
+**Terminal 2 (Nodo 2):**
+```bash
+cd "C:\ruta\a\tu\proyecto"
+cd TecMFS.DiskNode
+dotnet run --urls="http://localhost:5002"
+```
+
+**Terminal 3 (Nodo 3):**
+```bash
+cd "C:\ruta\a\tu\proyecto"
+cd TecMFS.DiskNode
+dotnet run --urls="http://localhost:5003"
+```
+
+**Terminal 4 (Nodo 4):**
+```bash
+cd "C:\ruta\a\tu\proyecto"
+cd TecMFS.DiskNode
+dotnet run --urls="http://localhost:5004"
+```
+
+## Uso
+
+1. **Iniciar Controller y GUI** desde Visual Studio
+2. **Ejecutar los 4 DiskNodes** desde terminales
+3. **Usar la interfaz gráfica** para gestionar archivos PDF
+4. **Monitorear estado** del sistema RAID desde la GUI
+
+El sistema automáticamente distribuye los datos entre los nodos disponibles y proporciona tolerancia a fallos mediante paridad RAID 5.
